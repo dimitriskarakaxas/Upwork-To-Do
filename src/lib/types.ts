@@ -2,7 +2,7 @@ export type Todo = {
   id: string;
   text: string;
   completed: boolean;
-  createdAt: number;
+  created_at: string;
 };
 
 export type Filter = "all" | "active" | "completed";
