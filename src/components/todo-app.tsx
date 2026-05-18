@@ -2,31 +2,34 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Filter, Todo } from "@/lib/types";
-import { createClient } from "@/lib/supabase/client";
 import { TodoInput } from "./todo-input";
 import { TodoList } from "./todo-list";
 import { TodoFilters } from "./todo-filters";
 
+async function parseError(res: Response): Promise<string> {
+  try {
+    const body = (await res.json()) as { error?: string };
+    return body.error ?? `Request failed (${res.status})`;
+  } catch {
+    return `Request failed (${res.status})`;
+  }
+}
+
 export function TodoApp() {
-  const supabase = useMemo(() => createClient(), []);
   const [todos, setTodos] = useState<Todo[]>([]);
   const [filter, setFilter] = useState<Filter>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const loadTodos = useCallback(async () => {
-    const { data, error } = await supabase
-      .from("todos")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      setError(error.message);
+    const res = await fetch("/api/todos", { cache: "no-store" });
+    if (!res.ok) {
+      setError(await parseError(res));
       return;
     }
-    setTodos((data ?? []) as Todo[]);
+    setTodos((await res.json()) as Todo[]);
     setError(null);
-  }, [supabase]);
+  }, []);
 
   useEffect(() => {
     loadTodos().finally(() => setLoading(false));
@@ -36,34 +39,37 @@ export function TodoApp() {
     const trimmed = text.trim();
     if (!trimmed) return;
 
-    const { data, error } = await supabase
-      .from("todos")
-      .insert({ text: trimmed, completed: false })
-      .select()
-      .single();
+    const res = await fetch("/api/todos", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: trimmed }),
+    });
 
-    if (error) {
-      setError(error.message);
+    if (!res.ok) {
+      setError(await parseError(res));
       return;
     }
-    setTodos((prev) => [data as Todo, ...prev]);
+    const created = (await res.json()) as Todo;
+    setTodos((prev) => [created, ...prev]);
   };
 
   const toggleTodo = async (id: string) => {
     const current = todos.find((t) => t.id === id);
     if (!current) return;
 
+    const nextCompleted = !current.completed;
     setTodos((prev) =>
-      prev.map((t) => (t.id === id ? { ...t, completed: !t.completed } : t))
+      prev.map((t) => (t.id === id ? { ...t, completed: nextCompleted } : t))
     );
 
-    const { error } = await supabase
-      .from("todos")
-      .update({ completed: !current.completed })
-      .eq("id", id);
+    const res = await fetch(`/api/todos/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ completed: nextCompleted }),
+    });
 
-    if (error) {
-      setError(error.message);
+    if (!res.ok) {
+      setError(await parseError(res));
       setTodos((prev) =>
         prev.map((t) => (t.id === id ? { ...t, completed: current.completed } : t))
       );
@@ -74,10 +80,9 @@ export function TodoApp() {
     const snapshot = todos;
     setTodos((prev) => prev.filter((t) => t.id !== id));
 
-    const { error } = await supabase.from("todos").delete().eq("id", id);
-
-    if (error) {
-      setError(error.message);
+    const res = await fetch(`/api/todos/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      setError(await parseError(res));
       setTodos(snapshot);
     }
   };
@@ -93,31 +98,28 @@ export function TodoApp() {
       prev.map((t) => (t.id === id ? { ...t, text: trimmed } : t))
     );
 
-    const { error } = await supabase
-      .from("todos")
-      .update({ text: trimmed })
-      .eq("id", id);
+    const res = await fetch(`/api/todos/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: trimmed }),
+    });
 
-    if (error) {
-      setError(error.message);
+    if (!res.ok) {
+      setError(await parseError(res));
       setTodos(snapshot);
     }
   };
 
   const clearCompleted = async () => {
     const snapshot = todos;
-    const completedIds = todos.filter((t) => t.completed).map((t) => t.id);
-    if (completedIds.length === 0) return;
+    const hasCompleted = todos.some((t) => t.completed);
+    if (!hasCompleted) return;
 
     setTodos((prev) => prev.filter((t) => !t.completed));
 
-    const { error } = await supabase
-      .from("todos")
-      .delete()
-      .in("id", completedIds);
-
-    if (error) {
-      setError(error.message);
+    const res = await fetch("/api/todos?completed=true", { method: "DELETE" });
+    if (!res.ok) {
+      setError(await parseError(res));
       setTodos(snapshot);
     }
   };
